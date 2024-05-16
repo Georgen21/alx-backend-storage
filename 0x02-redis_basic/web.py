@@ -1,73 +1,35 @@
 #!/usr/bin/env python3
 """ Implementing an expiring web cache and tracker
     obtain the HTML content of a particular URL and returns it """
-import redis
 import requests
+import redis
 from functools import wraps
-from typing import Callable
 
-redis_client = redis.Redis()
+store = redis.Redis()
 
-def cache_with_expiration(expiration: int):
-    """
-    Decorator to cache the result of a function in Redis with an expiration time.
 
-    Args:
-        expiration (int): The expiration time in seconds.
+def count_url_access(method):
+    """ Decorator counting how many times
+    a URL is accessed """
+    @wraps(method)
+    def wrapper(url):
+        cached_key = "cached:" + url
+        cached_data = store.get(cached_key)
+        if cached_data:
+            return cached_data.decode("utf-8")
 
-    Returns:
-        Callable: The decorator function.
-    """
+        count_key = "count:" + url
+        html = method(url)
 
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(url: str) -> str:
-            cache_key = f"cache:{url}"
-            cached_result = redis_client.get(cache_key)
-            if cached_result:
-                return cached_result.decode('utf-8')
-
-            result = func(url)
-            redis_client.setex(cache_key, expiration, result)
-            return result
-        return wrapper
-    return decorator
-
-def count_calls(func: Callable) -> Callable:
-    """
-    Decorator to count how many times a particular URL is accessed.
-
-    Args:
-        func (Callable): The function to be decorated.
-
-    Returns:
-        Callable: The decorated function with call counting.
-    """
-    @wraps(func)
-    def wrapper(url: str) -> str:
-        count_key = f"count:{url}"
-        redis_client.incr(count_key)
-        return func(url)
+        store.incr(count_key)
+        store.set(cached_key, html)
+        store.expire(cached_key, 10)
+        return html
     return wrapper
 
-@cache_with_expiration(10)
-@count_calls
+
+@count_url_access
 def get_page(url: str) -> str:
-    """
-    Obtain the HTML content of a particular URL and return it.
-
-    Args:
-        url (str): The URL to fetch.
-
-    Returns:
-        str: The HTML content of the URL.
-    """
-    response = requests.get(url)
-    return response.text
-
-if __name__ == "__main__":
-    test_url = "http://slowwly.robertomurray.co.uk/delay/5000/url/http://www.example.com"
-    print(get_page(test_url))
-    print(get_page(test_url))
-    count_key = f"count:{test_url}"
-    print(f"URL {test_url} was accessed {redis_client.get(count_key).decode('utf-8')} times.")
+    """ Returns HTML content of a url """
+    res = requests.get(url)
+    return res.text
